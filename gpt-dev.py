@@ -86,6 +86,7 @@ class Head(nn.Module):
         self.query = nn.Linear(batch_size, head_size, bias=False)
         self.value = nn.Linear(batch_size, head_size, bias=False)
         self.register_buffer('mask', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
         B, T, C = x.shape
@@ -96,6 +97,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,head_size) @ (B,head_size,T) -> (B,T,T)
         wei = wei.masked_fill(self.mask[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
         out = wei @ v
         return out
 
@@ -106,7 +108,8 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embed, 4*n_embed),
             nn.ReLU(),
-            nn.Linear(4*n_embed, n_embed)
+            nn.Linear(4*n_embed, n_embed),
+            nn.Dropout(dropout),
         )
         
     def forward(self, x):
@@ -118,11 +121,13 @@ class MultiHead(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(n_heads)])
         self.proj = nn.Linear(head_size * n_heads, n_embed)
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
         out = [h(x) for h in self.heads]
         out = torch.cat(out, dim=-1)
         out = self.proj(out)
+        out = self.dropout(out)
         return out
 
 class Block(nn.Module):
@@ -142,16 +147,12 @@ class Block(nn.Module):
 
 class BigramLanguageModel(nn.Module):
     """Bigram Language Model"""
-    def __init__(self, n_embed, n_head):
+    def __init__(self, n_embed, n_head, n_layers):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, n_embed)
         self.pos_embed = nn.Embedding(block_size, n_embed)
-        self.blocks = nn.Sequential(
-            Block(n_embed, n_head),
-            Block(n_embed, n_head),
-            Block(n_embed, n_head),
-            nn.LayerNorm(n_embed)
-        )
+        self.blocks = nn.Sequential(*[Block(n_embed, n_head) for _ in range(n_layers)])
+        self.ln_f = nn.LayerNorm(n_embed)
         self.lm_head = nn.Linear(n_embed, vocab_size)
         
     def forward(self, idx, targets=None):
@@ -190,10 +191,12 @@ class BigramLanguageModel(nn.Module):
             x = torch.cat([x, idx_next], dim=1) # B x (T+1)
 
         return x
-    
+
+dropout = 0.1
 n_embed = 32
 n_heads = 4
-model = BigramLanguageModel(n_embed, n_heads).to(device)
+n_layers = 3
+model = BigramLanguageModel(n_embed, n_heads, n_layers=n_layers).to(device)
 if enable_verbose:
     print('----')
     print('Model Desc:', model)
