@@ -104,8 +104,9 @@ class FeedForward(nn.Module):
     def __init__(self, n_embed):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embed, n_embed),
+            nn.Linear(n_embed, 4*n_embed),
             nn.ReLU(),
+            nn.Linear(4*n_embed, n_embed)
         )
         
     def forward(self, x):
@@ -113,37 +114,39 @@ class FeedForward(nn.Module):
 
 class MultiHead(nn.Module):
     """MultiHead attention network"""
-    def __init__(self, n_heads, n_embed):
+    def __init__(self, n_heads, n_embed, head_size):
         super().__init__()
-        self.heads = nn.ModuleList([Head(n_embed) for _ in range(n_heads)])
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(n_heads)])
+        self.proj = nn.Linear(head_size * n_heads, n_embed)
         
     def forward(self, x):
         out = [h(x) for h in self.heads]
         out = torch.cat(out, dim=-1)
+        out = self.proj(out)
         return out
 
 class Block(nn.Module):
     """Transformer Block"""
-    def __init__(self, n_embed, n_heads):
+    def __init__(self, n_embed, n_head):
         super().__init__()
-        self.sa_head = MultiHead(n_heads, n_embed//n_heads)
+        self.sa_head = MultiHead(n_head, n_embed, n_embed//n_head)
         self.ffwd = FeedForward(n_embed)
         
     def forward(self, x):
-        x = self.sa_head(x)
-        x = self.ffwd(x)
+        x = x + self.sa_head(x)
+        x = x + self.ffwd(x)
         return x
 
 class BigramLanguageModel(nn.Module):
     """Bigram Language Model"""
-    def __init__(self, n_embed, n_heads):
+    def __init__(self, n_embed, n_head):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, n_embed)
         self.pos_embed = nn.Embedding(block_size, n_embed)
         self.blocks = nn.Sequential(
-            Block(n_embed, n_heads),
-            Block(n_embed, n_heads),
-            Block(n_embed, n_heads),
+            Block(n_embed, n_head),
+            Block(n_embed, n_head),
+            Block(n_embed, n_head),
         )
         self.lm_head = nn.Linear(n_embed, vocab_size)
         
