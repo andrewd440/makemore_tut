@@ -79,6 +79,7 @@ def estimate_loss():
     return out
 
 class Head(nn.Module):
+    """Single head attention network"""
     def __init__(self, head_size):
         super().__init__()
         self.key = nn.Linear(batch_size, head_size, bias=False)
@@ -98,7 +99,20 @@ class Head(nn.Module):
         out = wei @ v
         return out
 
+class FeedForward(nn.Module):
+    """FeedForward network with ReLU activation"""
+    def __init__(self, n_embed):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embed, n_embed),
+            nn.ReLU(),
+        )
+        
+    def forward(self, x):
+        return self.net(x)
+
 class MultiHead(nn.Module):
+    """MultiHead attention network"""
     def __init__(self, n_heads, n_embed):
         super().__init__()
         self.heads = nn.ModuleList([Head(n_embed) for _ in range(n_heads)])
@@ -109,11 +123,13 @@ class MultiHead(nn.Module):
         return out
 
 class BigramLanguageModel(nn.Module):
+    """Bigram Language Model"""
     def __init__(self, n_embed, n_heads):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, n_embed)
         self.pos_embed = nn.Embedding(block_size, n_embed)
         self.sa_head = MultiHead(n_heads, n_embed//n_heads)
+        self.ffwd = FeedForward(n_embed)
         self.lm_head = nn.Linear(n_embed, vocab_size)
         
     def forward(self, idx, targets=None):
@@ -123,6 +139,7 @@ class BigramLanguageModel(nn.Module):
         emb_pos = self.pos_embed(torch.arange(T, device=device)) # T,C
         x = emb_tok + emb_pos # B,T,C
         x = self.sa_head(x) # B,T,C
+        x = self.ffwd(x) # B,T,C
         x = self.lm_head(x) # B,T,vocab_size
         logits = x
 
