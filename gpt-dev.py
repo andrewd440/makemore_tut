@@ -7,8 +7,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_interval = 300
 block_size = 8
 batch_size = 32
-max_iters = 3000
-learning_rate = 1e-2
+max_iters = 5000
+learning_rate = 1e-3
 eval_iters = 200
 enable_verbose = False
 
@@ -78,13 +78,52 @@ def estimate_loss():
     model.train()
     return out
 
-class BigramLanguageModel(nn.Module):
-    def __init__(self, vocab_size, embed_size):
+class Head(nn.Module):
+    def __init__(self, head_size):
         super().__init__()
-        self.embed = nn.Embedding(vocab_size, embed_size)
+        self.key = nn.Linear(batch_size, head_size, bias=False)
+        self.query = nn.Linear(batch_size, head_size, bias=False)
+        self.value = nn.Linear(batch_size, head_size, bias=False)
+        self.register_buffer('mask', torch.tril(torch.ones(block_size, block_size)))
         
-    def forward(self, x, targets=None):
-        x = self.embed(x)
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x) # (B,T,C) -> (B,T,head_size)
+        q = self.query(x) # (B,T,C) -> (B,T,head_size)
+        v = self.value(x) # (B,T,C) -> (B,T,head_size)
+
+        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B,T,head_size) @ (B,head_size,T) -> (B,T,T)
+        wei = wei.masked_fill(self.mask[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+        out = wei @ v
+        return out
+
+class MultiHead(nn.Module):
+    def __init__(self, n_heads, n_embed):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(n_embed) for _ in range(n_heads)])
+        
+    def forward(self, x):
+        out = [h(x) for h in self.heads]
+        out = torch.cat(out, dim=-1)
+        return out
+
+class BigramLanguageModel(nn.Module):
+    def __init__(self, n_embed, n_heads):
+        super().__init__()
+        self.token_embed = nn.Embedding(vocab_size, n_embed)
+        self.pos_embed = nn.Embedding(block_size, n_embed)
+        self.sa_head = MultiHead(n_heads, n_embed//n_heads)
+        self.lm_head = nn.Linear(n_embed, vocab_size)
+        
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        emb_tok = self.token_embed(idx) # B,T,C
+        emb_pos = self.pos_embed(torch.arange(T, device=device)) # T,C
+        x = emb_tok + emb_pos # B,T,C
+        x = self.sa_head(x) # B,T,C
+        x = self.lm_head(x) # B,T,vocab_size
         logits = x
 
         loss = None
@@ -102,7 +141,8 @@ class BigramLanguageModel(nn.Module):
     def generate(self, x, n):
         # input is B x T
         for i in range(n):
-            logits = self(x) # B x T x C
+            idx_cond = x[:, -block_size:] # B x T
+            logits = self(idx_cond) # B x T x C
             # only use last prediction
             logits = logits[:, -1, :] # B x C
             # sample from distribution
@@ -113,8 +153,9 @@ class BigramLanguageModel(nn.Module):
 
         return x
     
-n_embed = vocab_size
-model = BigramLanguageModel(vocab_size, n_embed).to(device)
+n_embed = 32
+n_heads = 4
+model = BigramLanguageModel(n_embed, n_heads).to(device)
 if enable_verbose:
     print('----')
     print('Model Desc:', model)
@@ -146,5 +187,4 @@ for step in range(max_iters):
 # Eval model
 print('----')
 print('Evaluating model...')
-print(decode(model.generate(torch.zeros((1,1), device=device, dtype=torch.long), 200)[0].tolist()))
-
+print(decode(model.generate(torch.zeros((1,1), dtype=torch.long).to(device), 200)[0].tolist()))
