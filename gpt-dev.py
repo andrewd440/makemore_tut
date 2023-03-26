@@ -131,10 +131,13 @@ class Block(nn.Module):
         super().__init__()
         self.sa_head = MultiHead(n_head, n_embed, n_embed//n_head)
         self.ffwd = FeedForward(n_embed)
+        self.norm1 = nn.LayerNorm(n_embed)
+        self.norm2 = nn.LayerNorm(n_embed)
         
     def forward(self, x):
-        x = x + self.sa_head(x)
-        x = x + self.ffwd(x)
+        x = x + self.sa_head(self.norm1(x)) # prenorm, which is a bit different from the paper
+        x = x + self.ffwd(self.norm2(x))
+        x = self.norm1(x)
         return x
 
 class BigramLanguageModel(nn.Module):
