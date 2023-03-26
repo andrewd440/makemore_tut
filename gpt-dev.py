@@ -122,14 +122,29 @@ class MultiHead(nn.Module):
         out = torch.cat(out, dim=-1)
         return out
 
+class Block(nn.Module):
+    """Transformer Block"""
+    def __init__(self, n_embed, n_heads):
+        super().__init__()
+        self.sa_head = MultiHead(n_heads, n_embed//n_heads)
+        self.ffwd = FeedForward(n_embed)
+        
+    def forward(self, x):
+        x = self.sa_head(x)
+        x = self.ffwd(x)
+        return x
+
 class BigramLanguageModel(nn.Module):
     """Bigram Language Model"""
     def __init__(self, n_embed, n_heads):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, n_embed)
         self.pos_embed = nn.Embedding(block_size, n_embed)
-        self.sa_head = MultiHead(n_heads, n_embed//n_heads)
-        self.ffwd = FeedForward(n_embed)
+        self.blocks = nn.Sequential(
+            Block(n_embed, n_heads),
+            Block(n_embed, n_heads),
+            Block(n_embed, n_heads),
+        )
         self.lm_head = nn.Linear(n_embed, vocab_size)
         
     def forward(self, idx, targets=None):
@@ -138,8 +153,7 @@ class BigramLanguageModel(nn.Module):
         emb_tok = self.token_embed(idx) # B,T,C
         emb_pos = self.pos_embed(torch.arange(T, device=device)) # T,C
         x = emb_tok + emb_pos # B,T,C
-        x = self.sa_head(x) # B,T,C
-        x = self.ffwd(x) # B,T,C
+        x = self.blocks(x) # B,T,C
         x = self.lm_head(x) # B,T,vocab_size
         logits = x
 
