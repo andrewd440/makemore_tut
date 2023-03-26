@@ -5,11 +5,17 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 eval_interval = 300
-block_size = 8
-batch_size = 32
+block_size = 256
+batch_size = 64
 max_iters = 5000
-learning_rate = 1e-3
+learning_rate = 1e-4
 eval_iters = 200
+
+dropout = 0.2
+n_embed = 384
+n_heads = 6
+n_layers = 6
+
 enable_verbose = False
 
 # download data from: https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
@@ -82,9 +88,9 @@ class Head(nn.Module):
     """Single head attention network"""
     def __init__(self, head_size):
         super().__init__()
-        self.key = nn.Linear(batch_size, head_size, bias=False)
-        self.query = nn.Linear(batch_size, head_size, bias=False)
-        self.value = nn.Linear(batch_size, head_size, bias=False)
+        self.key = nn.Linear(n_embed, head_size, bias=False)
+        self.query = nn.Linear(n_embed, head_size, bias=False)
+        self.value = nn.Linear(n_embed, head_size, bias=False)
         self.register_buffer('mask', torch.tril(torch.ones(block_size, block_size)))
         self.dropout = nn.Dropout(dropout)
         
@@ -117,7 +123,7 @@ class FeedForward(nn.Module):
 
 class MultiHead(nn.Module):
     """MultiHead attention network"""
-    def __init__(self, n_heads, n_embed, head_size):
+    def __init__(self, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(n_heads)])
         self.proj = nn.Linear(head_size * n_heads, n_embed)
@@ -132,9 +138,9 @@ class MultiHead(nn.Module):
 
 class Block(nn.Module):
     """Transformer Block"""
-    def __init__(self, n_embed, n_head):
+    def __init__(self):
         super().__init__()
-        self.sa_head = MultiHead(n_head, n_embed, n_embed//n_head)
+        self.sa_head = MultiHead(n_embed//n_heads)
         self.ffwd = FeedForward(n_embed)
         self.norm1 = nn.LayerNorm(n_embed)
         self.norm2 = nn.LayerNorm(n_embed)
@@ -147,11 +153,11 @@ class Block(nn.Module):
 
 class BigramLanguageModel(nn.Module):
     """Bigram Language Model"""
-    def __init__(self, n_embed, n_head, n_layers):
+    def __init__(self):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, n_embed)
         self.pos_embed = nn.Embedding(block_size, n_embed)
-        self.blocks = nn.Sequential(*[Block(n_embed, n_head) for _ in range(n_layers)])
+        self.blocks = nn.Sequential(*[Block() for _ in range(n_layers)])
         self.ln_f = nn.LayerNorm(n_embed)
         self.lm_head = nn.Linear(n_embed, vocab_size)
         
@@ -192,11 +198,7 @@ class BigramLanguageModel(nn.Module):
 
         return x
 
-dropout = 0.1
-n_embed = 32
-n_heads = 4
-n_layers = 3
-model = BigramLanguageModel(n_embed, n_heads, n_layers=n_layers).to(device)
+model = BigramLanguageModel().to(device)
 if enable_verbose:
     print('----')
     print('Model Desc:', model)
@@ -228,4 +230,7 @@ for step in range(max_iters):
 # Eval model
 print('----')
 print('Evaluating model...')
-print(decode(model.generate(torch.zeros((1,1), dtype=torch.long).to(device), 200)[0].tolist()))
+eval_text = decode(model.generate(torch.zeros((1,1), dtype=torch.long).to(device), 10000)[0].tolist())
+# save eval text
+with open('eval.txt', 'w') as f:
+    f.write(eval_text)
